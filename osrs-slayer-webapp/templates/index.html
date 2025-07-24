@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSRS Slayer Tracker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>OSRS Slayer Tracker</h1>
+            <div class="stats">
+                <span>Slayer Points: <strong id="slayer-points">0</strong></span>
+                <span>Task Streak: <strong id="task-streak">0</strong></span>
+            </div>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab-button active" onclick="showTab('monsters')">Monsters</button>
+            <button class="tab-button" onclick="showTab('masters')">Slayer Masters</button>
+            <button class="tab-button" onclick="showTab('player-info')">Player Information</button>
+            <button class="tab-button" onclick="showTab('task-checker')">Task Checker</button>
+            <button class="tab-button" onclick="showTab('settings')">Settings</button>
+        </nav>
+
+        <div id="monsters" class="tab-content active">
+            <div class="section">
+                <h2>Add Monster</h2>
+                <div class="form-group">
+                    <input type="text" id="monster-name" placeholder="Monster name (e.g., Red Dragon)">
+                    <div class="radio-group">
+                        <label>
+                            <input type="radio" name="drop-type" value="infinite" checked>
+                            Always drops same items (infinite kills)
+                        </label>
+                        <label>
+                            <input type="radio" name="drop-type" value="limited">
+                            Has rare drops
+                        </label>
+                    </div>
+                    <div id="drop-rate-input" style="display: none;">
+                        <input type="text" id="drop-rate" placeholder="Rarest drop rate (e.g., 1/64)">
+                    </div>
+                    <div class="form-group">
+                        <label>Select Slayer Tasks this monster belongs to (hold Ctrl/Cmd for multiple):</label>
+                        <select id="task-select" multiple size="10" class="task-select">
+                            </select>
+                    </div>
+                    <button onclick="addMonster()">Add Monster</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Monster List</h2>
+                <div id="monster-list" class="monster-grid"></div>
+            </div>
+        </div>
+
+        <div id="masters" class="tab-content">
+            <div class="section">
+                <h2>Slayer Master Efficiency</h2>
+                <div id="master-list" class="master-grid"></div>
+            </div>
+        </div>
+
+        <div id="player-info" class="tab-content">
+            <div class="section">
+                <h2>Player Information</h2>
+                <div class="player-info-grid">
+                    <div class="form-group">
+                        <label for="combat-level">Combat Level</label>
+                        <input type="number" id="combat-level" min="3">
+                    </div>
+                    <div class="form-group">
+                        <label for="slayer-level">Slayer Level</label>
+                        <input type="number" id="slayer-level" min="1" max="99">
+                    </div>
+                </div>
+            </div>
+            <div class="section">
+                <h3>Completed Quests</h3>
+                <div id="quest-unlocks" class="unlocks-grid"></div>
+            </div>
+            <div class="section">
+                <h3>Slayer Unlocks</h3>
+                <div id="slayer-unlocks" class="unlocks-grid"></div>
+            </div>
+            <button onclick="savePlayerInfo()">Save Player Information</button>
+        </div>
+
+
+        <div id="task-checker" class="tab-content">
+            <div class="section">
+                <h2>Check Task Availability</h2>
+                <div class="form-group">
+                    <label>Enter monsters in your task (one per line):</label>
+                    <textarea id="task-monsters" rows="5" placeholder="Red Dragon&#10;Baby Red Dragon&#10;Brutal Red Dragon"></textarea>
+                    <button onclick="checkTask()">Check Task</button>
+                </div>
+                <div id="task-result"></div>
+            </div>
+        </div>
+
+        <div id="settings" class="tab-content">
+            <div class="section">
+                <h2>Settings</h2>
+                <div class="form-group">
+                    <label>Slayer Points:</label>
+                    <input type="number" id="points-input" min="0">
+                    <button onclick="updatePoints()">Update Points</button>
+                </div>
+                <div class="form-group">
+                    <label>Task Streak:</label>
+                    <input type="number" id="streak-input" min="0">
+                    <button onclick="updateStreak()">Update Streak</button>
+                </div>
+                <div class="form-group">
+                    <button onclick="initCommonTasks()" class="init-button">Initialize Common Tasks</button>
+                    <p class="help-text">This will add common OSRS monsters and tasks to get you started!</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="task-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2 id="modal-title"></h2>
+            <div id="modal-tasks"></div>
+        </div>
+    </div>
+
+    <div id="edit-modal" class="modal">
+        <div class="modal-content" style="width: 400px;">
+            <span class="close" onclick="closeEditModal()">&times;</span>
+            <h2>Edit Drop Rate</h2>
+            <div class="form-group">
+                <label>Monster: <span id="edit-monster-name"></span></label>
+                <input type="hidden" id="edit-monster-id">
+                <div class="radio-group">
+                    <label>
+                        <input type="radio" name="edit-drop-type" value="infinite">
+                        Always drops same items (infinite kills)
+                    </label>
+                    <label>
+                        <input type="radio" name="edit-drop-type" value="limited">
+                        Has rare drops
+                    </label>
+                </div>
+                <div id="edit-drop-rate-input">
+                    <input type="text" id="edit-drop-rate" placeholder="Rarest drop rate (e.g., 1/3000)">
+                </div>
+                <button onclick="saveDropRate()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let currentMasterId = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            loadMonsters();
+            loadMasters();
+            loadPlayerData();
+            loadTasksForDropdown();
+            loadPlayerInfo();
+
+            // Handle drop type radio buttons
+            document.querySelectorAll('input[name="drop-type"]').forEach(radio => {
+                radio.addEventListener('change', function() {
+                    const dropRateInput = document.getElementById('drop-rate-input');
+                    dropRateInput.style.display = this.value === 'limited' ? 'block' : 'none';
+                });
+            });
+
+            // Handle edit drop type radio buttons
+            document.querySelectorAll('input[name="edit-drop-type"]').forEach(radio => {
+                radio.addEventListener('change', function() {
+                    const dropRateInput = document.getElementById('edit-drop-rate-input');
+                    dropRateInput.style.display = this.value === 'limited' ? 'block' : 'none';
+                });
+            });
+        });
+
+        // Tab switching
+        function showTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Remove active class from all buttons
+            document.querySelectorAll('.tab-button').forEach(button => {
+                button.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            
+            // Add active class to clicked button
+            event.target.classList.add('active');
+        }
+
+        // Load player data
+        async function loadPlayerData() {
+            try {
+                const response = await fetch('/api/player-data');
+                const data = await response.json();
+                
+                document.getElementById('slayer-points').textContent = data.slayer_points || '0';
+                document.getElementById('points-input').value = data.slayer_points || '0';
+
+                document.getElementById('task-streak').textContent = data.task_streak || '0';
+                document.getElementById('streak-input').value = data.task_streak || '0';
+
+            } catch (error) {
+                console.error('Error loading player data:', error);
+            }
+        }
+
+        // Update points
+        async function updatePoints() {
+            const points = document.getElementById('points-input').value;
+            try {
+                await fetch('/api/player-data', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({slayer_points: points})
+                });
+                document.getElementById('slayer-points').textContent = points;
+                showMessage('Points updated!');
+            } catch (error) {
+                showMessage('Error updating points', 'error');
+            }
+        }
+
+        // Update streak
+        async function updateStreak() {
+            const streak = document.getElementById('streak-input').value;
+            try {
+                await fetch('/api/player-data', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({task_streak: streak})
+                });
+                document.getElementById('task-streak').textContent = streak;
+                showMessage('Streak updated!');
+            } catch (error) {
+                showMessage('Error updating streak', 'error');
+            }
+        }
+
+        // Load monsters
+        async function loadMonsters() {
+            try {
+                const response = await fetch('/api/monsters');
+                const monsters = await response.json();
+                
+                const monsterList = document.getElementById('monster-list');
+                monsterList.innerHTML = '';
+                
+                monsters.forEach(monster => {
+                    const card = createMonsterCard(monster);
+                    monsterList.appendChild(card);
+                });
+            } catch (error) {
+                console.error('Error loading monsters:', error);
+            }
+        }
+
+        // Load tasks for dropdown
+        async function loadTasksForDropdown() {
+            try {
+                const response = await fetch('/api/all-tasks');
+                const tasks = await response.json();
+                
+                const taskSelect = document.getElementById('task-select');
+                taskSelect.innerHTML = '';
+                
+                // Sort tasks alphabetically
+                tasks.sort((a, b) => a.name.localeCompare(b.name));
+                
+                tasks.forEach(task => {
+                    const option = document.createElement('option');
+                    option.value = task.id;
+                    option.textContent = `${task.name} (${task.slayer_requirement} Slayer)`;
+                    taskSelect.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading tasks:', error);
+            }
+        }
+
+        // Create monster card
+        function createMonsterCard(monster) {
+            const card = document.createElement('div');
+            card.className = 'monster-card';
+            
+            const isLocked = monster.kill_limit !== -1 && monster.current_kills >= monster.kill_limit;
+            if (isLocked) {
+                card.classList.add('locked');
+            }
+            
+            const limitText = monster.kill_limit === -1 ? '∞' : monster.kill_limit;
+            const remainingText = monster.kill_limit === -1 ? '∞' : monster.remaining;
+            
+            // Create task list
+            const taskList = monster.tasks.map(task => task.name).join(', ');
+            
+            card.innerHTML = `
+                <h3>${monster.name}</h3>
+                <div class="monster-stats">
+                    <p>Kills: <strong>${monster.current_kills}/${limitText}</strong></p>
+                    <p>Remaining: <strong class="${isLocked ? 'danger' : ''}">${remainingText}</strong></p>
+                    ${taskList ? `<p class="task-list">Tasks: ${taskList}</p>` : '<p class="task-list">No tasks assigned</p>'}
+                </div>
+                <div class="monster-actions">
+                    <button onclick="editDropRate(${monster.id}, '${monster.name}', ${monster.kill_limit})" class="edit-button">Edit Drop Rate</button>
+                    ${!isLocked ? `
+                        <div class="kill-input">
+                            <input type="number" id="kills-${monster.id}" min="1" placeholder="Kills">
+                            <button onclick="recordKills(${monster.id})">Add</button>
+                        </div>
+                    ` : '<p class="locked-text">LOCKED - Cannot kill more</p>'}
+                </div>
+            `;
+            
+            return card;
+        }
+
+        // Add monster
+        async function addMonster() {
+            const name = document.getElementById('monster-name').value.trim();
+            const dropType = document.querySelector('input[name="drop-type"]:checked').value;
+            const taskSelect = document.getElementById('task-select');
+            const selectedTasks = Array.from(taskSelect.selectedOptions).map(option => parseInt(option.value));
+            
+            if (!name) {
+                showMessage('Please enter a monster name', 'error');
+                return;
+            }
+            
+            if (selectedTasks.length === 0) {
+                showMessage('Please select at least one slayer task this monster belongs to', 'error');
+                return;
+            }
+            
+            let killLimit = -1;
+            
+            if (dropType === 'limited') {
+                const dropRate = document.getElementById('drop-rate').value.trim();
+                if (!dropRate) {
+                    showMessage('Please enter drop rate', 'error');
+                    return;
+                }
+                
+                const parts = dropRate.split('/');
+                if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+                    const denominator = parseInt(parts[1]) / parseInt(parts[0]);
+                    killLimit = Math.ceil(denominator * Math.log(2));
+                } else {
+                    showMessage('Invalid drop rate format. Use format like 1/128', 'error');
+                    return;
+                }
+            }
+            
+            try {
+                const response = await fetch('/api/monsters', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name: name, 
+                        kill_limit: killLimit,
+                        task_ids: selectedTasks
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage(result.message, 'success');
+                    document.getElementById('monster-name').value = '';
+                    document.getElementById('drop-rate').value = '';
+                    taskSelect.selectedIndex = -1;
+                    loadMonsters();
+                    loadMasters(); // Reload masters to update efficiency
+                } else {
+                    showMessage(result.message, 'error');
+                }
+            } catch (error) {
+                showMessage('Error adding monster', 'error');
+            }
+        }
+
+        // Record kills
+        async function recordKills(monsterId) {
+            const killsInput = document.getElementById(`kills-${monsterId}`);
+            const kills = parseInt(killsInput.value);
+            
+            if (!kills || kills <= 0) {
+                showMessage('Please enter a valid number of kills', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/monsters/${monsterId}/kills`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({kills: kills})
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage(result.message, 'success');
+                    killsInput.value = '';
+                    loadMonsters();
+                } else {
+                    showMessage(result.message, 'error');
+                }
+            } catch (error) {
+                showMessage('Error recording kills', 'error');
+            }
+        }
+
+        // Load slayer masters
+        async function loadMasters() {
+            try {
+                const response = await fetch('/api/slayer-masters');
+                const masters = await response.json();
+                
+                const masterList = document.getElementById('master-list');
+                masterList.innerHTML = '';
+                
+                // Sort by efficiency
+                masters.sort((a, b) => b.efficiency.net_points - a.efficiency.net_points);
+                
+                masters.forEach(master => {
+                    const card = createMasterCard(master);
+                    masterList.appendChild(card);
+                });
+            } catch (error) {
+                console.error('Error loading masters:', error);
+            }
+        }
+
+        // Create master card
+        function createMasterCard(master) {
+            const card = document.createElement('div');
+            card.className = 'master-card';
+
+            const efficiency = master.efficiency;
+            const netPoints = efficiency.net_points || 0;
+
+            // Find the highest net_points among all currently displayed masters
+            let maxNetPoints = -Infinity;
+            document.querySelectorAll('.master-card .net-points strong').forEach(el => {
+                const points = parseFloat(el.textContent);
+                if (!isNaN(points) && points > maxNetPoints) {
+                    maxNetPoints = points;
+                }
+            });
+            if (netPoints > maxNetPoints) {
+                maxNetPoints = netPoints;
+            }
+
+            if (netPoints === maxNetPoints && netPoints > -Infinity) {
+                // Remove 'optimal' from other cards
+                document.querySelectorAll('.master-card.optimal').forEach(c => c.classList.remove('optimal'));
+                card.classList.add('optimal');
+            }
+
+            card.innerHTML = `
+                <h3>${master.name}</h3>
+                <div class="master-stats">
+                    <p>Requirements: ${master.combat_requirement} Combat, ${master.slayer_requirement} Slayer</p>
+                    <p>Points per task: ${master.points_per_task} (${master.points_per_10th} on 10th)</p>
+                    <div class="efficiency-stats">
+                        <p>Assignable Tasks: <strong>${efficiency.total_tasks}</strong></p>
+                        <p>Doable tasks: <strong>${efficiency.doable_tasks}/${efficiency.total_tasks}</strong></p>
+                        <p>Skip rate: <strong class="${efficiency.skip_rate > 50 ? 'danger' : ''}">${efficiency.skip_rate.toFixed(1)}%</strong></p>
+                        <p>Avg points: <strong>${efficiency.avg_points.toFixed(1)}</strong></p>
+                        <p>Skip cost: <strong class="danger">-${efficiency.skip_cost.toFixed(1)}</strong></p>
+                        <p class="net-points">Net points/task: <strong class="${netPoints > 0 ? 'success' : 'danger'}">${netPoints.toFixed(1)}</strong></p>
+                    </div>
+                </div>
+                <button onclick="viewMasterTasks(${master.id}, '${master.name}')">View Tasks</button>
+            `;
+
+            return card;
+        }
+
+
+        // View master tasks
+        async function viewMasterTasks(masterId, masterName) {
+            currentMasterId = masterId;
+            
+            try {
+                const response = await fetch(`/api/slayer-masters/${masterId}/tasks`);
+                const tasks = await response.json();
+                
+                document.getElementById('modal-title').textContent = `${masterName} Tasks`;
+                const modalTasks = document.getElementById('modal-tasks');
+                modalTasks.innerHTML = '';
+                
+                tasks.forEach(task => {
+                    const taskDiv = createTaskDiv(task, masterId);
+                    modalTasks.appendChild(taskDiv);
+                });
+                
+                document.getElementById('task-modal').style.display = 'block';
+            } catch (error) {
+                console.error('Error loading tasks:', error);
+            }
+        }
+
+        // Create task div
+        function createTaskDiv(task, masterId) {
+            const div = document.createElement('div');
+            div.className = 'task-item';
+
+            if (!task.is_assignable) {
+                div.classList.add('unassignable-task');
+            }
+            if (!task.can_do) {
+                div.classList.add('locked-task');
+            }
+            if (task.is_blocked) {
+                div.classList.add('blocked-task');
+            }
+
+            const monsterList = task.monsters.map(m => {
+                const limitText = m.kill_limit === -1 ? '∞' : m.kill_limit;
+                const statusIcon = m.can_kill ? '✓' : '✗';
+                const statusClass = m.can_kill ? 'can-kill' : 'cannot-kill';
+                return `<span class="${statusClass}">${statusIcon} ${m.name} (${m.current_kills}/${limitText})</span>`;
+            }).join(', ');
+
+            let unlocksHTML = '';
+            if (task.quest_unlocks && task.quest_unlocks.length > 0) {
+                unlocksHTML += `<p class="unlock-req">Quest Unlocks: ${task.quest_unlocks.join(', ')}</p>`;
+            }
+            if (task.slayer_unlock) {
+                unlocksHTML += `<p class="unlock-req">Slayer Unlock: ${task.slayer_unlock}</p>`;
+            }
+            if (!task.is_assignable) {
+                unlocksHTML += '<p class="warning">⚠️ Cannot be assigned!</p>';
+            }
+
+
+            div.innerHTML = `
+                <div class="task-header">
+                    <h4>${task.name}</h4>
+                    <div class="task-actions">
+                        ${task.is_blocked ? 
+                            `<button onclick="unblockTask(${masterId}, ${task.id})">Unblock</button>` :
+                            `<button onclick="blockTask(${masterId}, ${task.id})">Block</button>`
+                        }
+                    </div>
+                </div>
+                <div class="task-details">
+                    <p>Weight: ${task.weight} | Amount: ${task.min_amount}-${task.max_amount} | Req: ${task.slayer_requirement} Slayer</p>
+                    <p>Monsters: ${monsterList}</p>
+                    ${unlocksHTML}
+                    ${!task.can_do ? '<p class="warning">⚠️ Cannot complete - all monsters locked!</p>' : ''}
+                </div>
+            `;
+            
+            return div;
+        }
+
+        // Block/unblock tasks
+        async function blockTask(masterId, taskId) {
+            try {
+                const response = await fetch('/api/block-task', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({master_id: masterId, task_id: taskId})
+                });
+                
+                if (response.ok) {
+                    viewMasterTasks(masterId, document.getElementById('modal-title').textContent.replace(' Tasks', ''));
+                    loadMasters();
+                }
+            } catch (error) {
+                console.error('Error blocking task:', error);
+            }
+        }
+
+        async function unblockTask(masterId, taskId) {
+            try {
+                const response = await fetch('/api/unblock-task', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({master_id: masterId, task_id: taskId})
+                });
+                
+                if (response.ok) {
+                    viewMasterTasks(masterId, document.getElementById('modal-title').textContent.replace(' Tasks', ''));
+                    loadMasters();
+                }
+            } catch (error) {
+                console.error('Error unblocking task:', error);
+            }
+        }
+
+        // Check task
+        function checkTask() {
+            const monstersText = document.getElementById('task-monsters').value.trim();
+            const monsters = monstersText.split('\n').filter(m => m.trim());
+            
+            if (monsters.length === 0) {
+                showMessage('Please enter at least one monster', 'error');
+                return;
+            }
+            
+            // For now, just check against loaded monsters
+            // In a full implementation, this would check against the database
+            const resultDiv = document.getElementById('task-result');
+            resultDiv.innerHTML = '<h3>Task Check Result:</h3>';
+            
+            let canDoTask = false;
+            
+            monsters.forEach(monsterName => {
+                const status = checkMonsterAvailability(monsterName.trim());
+                const statusClass = status.canKill ? 'success' : 'danger';
+                const statusIcon = status.canKill ? '✓' : '✗';
+                
+                if (status.canKill) canDoTask = true;
+                
+                resultDiv.innerHTML += `
+                    <p class="${statusClass}">
+                        ${statusIcon} ${monsterName}: ${status.message}
+                    </p>
+                `;
+            });
+            
+            resultDiv.innerHTML += `
+                <div class="task-verdict ${canDoTask ? 'success' : 'danger'}">
+                    ${canDoTask ? '✓ TASK IS DOABLE!' : '✗ TASK IS LOCKED - Skip or block this task!'}
+                </div>
+            `;
+        }
+
+        // Check monster availability (simplified)
+        function checkMonsterAvailability(monsterName) {
+            // This is a placeholder - in the full app this would check the database
+            return {
+                canKill: true,
+                message: 'Status unknown - add monster to database for tracking'
+            };
+        }
+
+        // Initialize common tasks
+        async function initCommonTasks() {
+            if (!confirm('This will add many common OSRS monsters and tasks. Continue?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/init-common-tasks', {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('Common tasks initialized! Refreshing the page.', 'success');
+                    setTimeout(() => location.reload(), 2000);
+                }
+            } catch (error) {
+                showMessage('Error initializing tasks', 'error');
+            }
+        }
+
+        // Load player info and unlocks
+        async function loadPlayerInfo() {
+            try {
+                // Fetch all possible unlocks
+                const unlocksResponse = await fetch('/api/unlocks');
+                const allUnlocks = await unlocksResponse.json();
+
+                // Fetch player's current data
+                const playerDataResponse = await fetch('/api/player-data');
+                const playerData = await playerDataResponse.json();
+
+                // Populate levels
+                document.getElementById('combat-level').value = playerData.combat_level || 3;
+                document.getElementById('slayer-level').value = playerData.slayer_level || 1;
+
+                // Populate quest checkboxes
+                const questContainer = document.getElementById('quest-unlocks');
+                questContainer.innerHTML = '';
+                allUnlocks.quests.forEach(quest => {
+                    const isChecked = playerData.completed_quests.includes(quest);
+                    const checkbox = createCheckbox(quest, 'quest', isChecked);
+                    questContainer.appendChild(checkbox);
+                });
+
+                // Populate slayer unlock checkboxes
+                const slayerContainer = document.getElementById('slayer-unlocks');
+                slayerContainer.innerHTML = '';
+                allUnlocks.slayer_unlocks.forEach(unlock => {
+                    const isChecked = playerData.slayer_unlocks.includes(unlock);
+                    const checkbox = createCheckbox(unlock, 'slayer_unlock', isChecked);
+                    slayerContainer.appendChild(checkbox);
+                });
+
+            } catch (error) {
+                console.error('Error loading player info:', error);
+            }
+        }
+        
+        function createCheckbox(name, group, isChecked) {
+            const label = document.createElement('label');
+            label.className = 'checkbox-label';
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.name = group;
+            input.value = name;
+            input.checked = isChecked;
+            label.appendChild(input);
+            label.appendChild(document.createTextNode(` ${name}`));
+            return label;
+        }
+
+        // Save player info
+        async function savePlayerInfo() {
+            const combatLevel = document.getElementById('combat-level').value;
+            const slayerLevel = document.getElementById('slayer-level').value;
+
+            const completedQuests = Array.from(document.querySelectorAll('input[name="quest"]:checked'))
+                                         .map(cb => cb.value);
+            const slayerUnlocks = Array.from(document.querySelectorAll('input[name="slayer_unlock"]:checked'))
+                                       .map(cb => cb.value);
+
+            const data = {
+                combat_level: combatLevel,
+                slayer_level: slayerLevel,
+                completed_quests: completedQuests,
+                slayer_unlocks: slayerUnlocks
+            };
+
+            try {
+                await fetch('/api/player-data', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                showMessage('Player information saved!', 'success');
+                // Reload masters to reflect changes
+                loadMasters();
+            } catch (error) {
+                showMessage('Error saving player information', 'error');
+            }
+        }
+
+
+        // Close modal
+        function closeModal() {
+            document.getElementById('task-modal').style.display = 'none';
+        }
+
+        // Show message
+        function showMessage(message, type = 'info') {
+            // Simple alert for now - can be replaced with a better notification system
+            alert(message);
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('task-modal');
+            const editModal = document.getElementById('edit-modal');
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+            if (event.target === editModal) {
+                editModal.style.display = 'none';
+            }
+        }
+
+        // Edit drop rate
+        function editDropRate(monsterId, monsterName, currentLimit) {
+            document.getElementById('edit-monster-id').value = monsterId;
+            document.getElementById('edit-monster-name').textContent = monsterName;
+            
+            if (currentLimit === -1) {
+                document.querySelector('input[name="edit-drop-type"][value="infinite"]').checked = true;
+                document.getElementById('edit-drop-rate-input').style.display = 'none';
+            } else {
+                document.querySelector('input[name="edit-drop-type"][value="limited"]').checked = true;
+                document.getElementById('edit-drop-rate-input').style.display = 'block';
+                const denominator = Math.round(currentLimit / Math.log(2));
+                document.getElementById('edit-drop-rate').value = `1/${denominator}`;
+            }
+            
+            document.getElementById('edit-modal').style.display = 'block';
+        }
+
+        // Save drop rate
+        async function saveDropRate() {
+            const monsterId = document.getElementById('edit-monster-id').value;
+            const dropType = document.querySelector('input[name="edit-drop-type"]:checked').value;
+            
+            let killLimit = -1;
+            
+            if (dropType === 'limited') {
+                const dropRate = document.getElementById('edit-drop-rate').value.trim();
+                if (!dropRate) {
+                    showMessage('Please enter drop rate', 'error');
+                    return;
+                }
+                
+                const parts = dropRate.split('/');
+                if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+                    const denominator = parseInt(parts[1]) / parseInt(parts[0]);
+                    killLimit = Math.ceil(denominator * Math.log(2));
+                } else {
+                    showMessage('Invalid drop rate format. Use format like 1/128', 'error');
+                    return;
+                }
+            }
+            
+            try {
+                const response = await fetch(`/api/monsters/${monsterId}/drop-rate`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({kill_limit: killLimit})
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage(result.message, 'success');
+                    closeEditModal();
+                    loadMonsters();
+                    loadMasters(); // Reload to update efficiency
+                } else {
+                    showMessage(result.message, 'error');
+                }
+            } catch (error) {
+                showMessage('Error updating drop rate', 'error');
+            }
+        }
+
+        // Close edit modal
+        function closeEditModal() {
+            document.getElementById('edit-modal').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
