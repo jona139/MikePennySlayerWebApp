@@ -127,7 +127,8 @@ class SlayerDatabase:
             'combat_level': '3',
             'slayer_level': '1',
             'completed_quests': '[]',
-            'slayer_unlocks': '[]'
+            'slayer_unlocks': '[]',
+            'block_slots': '0'
         }
         for key, value in player_defaults.items():
             cursor.execute('INSERT OR IGNORE INTO player_data (key, value) VALUES (?, ?)', (key, value))

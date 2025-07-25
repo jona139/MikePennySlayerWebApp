@@ -76,6 +76,10 @@
                         <label for="slayer-level">Slayer Level</label>
                         <input type="number" id="slayer-level" min="1" max="99">
                     </div>
+                    <div class="form-group">
+                        <label for="block-slots">Amount of block slots unlocked</label>
+                        <input type="number" id="block-slots" min="0">
+                    </div>
                 </div>
             </div>
             <div class="section">
@@ -481,6 +485,7 @@
                     <div class="efficiency-stats">
                         <p>Assignable Tasks: <strong>${efficiency.total_tasks}</strong></p>
                         <p>Doable tasks: <strong>${efficiency.doable_tasks}/${efficiency.total_tasks}</strong></p>
+                        <p>Blocked tasks: <strong class="danger">${efficiency.blocked_tasks}</strong></p>
                         <p>Skip rate: <strong class="${efficiency.skip_rate > 50 ? 'danger' : ''}">${efficiency.skip_rate.toFixed(1)}%</strong></p>
                         <p>Avg points: <strong>${efficiency.avg_points.toFixed(1)}</strong></p>
                         <p>Skip cost: <strong class="danger">-${efficiency.skip_cost.toFixed(1)}</strong></p>
@@ -556,7 +561,7 @@
                     <h4>${task.name}</h4>
                     <div class="task-actions">
                         ${task.is_blocked ? 
-                            `<button onclick="unblockTask(${masterId}, ${task.id})">Unblock</button>` :
+                            `<span><strong>Blocked</strong></span><button onclick="unblockTask(${masterId}, ${task.id})">Unblock</button>` :
                             `<button onclick="blockTask(${masterId}, ${task.id})">Block</button>`
                         }
                     </div>
@@ -690,6 +695,7 @@
                 // Populate levels
                 document.getElementById('combat-level').value = playerData.combat_level || 3;
                 document.getElementById('slayer-level').value = playerData.slayer_level || 1;
+                document.getElementById('block-slots').value = playerData.block_slots || 0;
 
                 // Populate quest checkboxes
                 const questContainer = document.getElementById('quest-unlocks');
@@ -731,6 +737,7 @@
         async function savePlayerInfo() {
             const combatLevel = document.getElementById('combat-level').value;
             const slayerLevel = document.getElementById('slayer-level').value;
+            const blockSlots = document.getElementById('block-slots').value;
 
             const completedQuests = Array.from(document.querySelectorAll('input[name="quest"]:checked'))
                                          .map(cb => cb.value);
@@ -740,6 +747,7 @@
             const data = {
                 combat_level: combatLevel,
                 slayer_level: slayerLevel,
+                block_slots: blockSlots,
                 completed_quests: completedQuests,
                 slayer_unlocks: slayerUnlocks
             };
