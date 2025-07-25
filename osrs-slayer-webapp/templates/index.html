@@ -47,6 +47,11 @@
                         <select id="task-select" multiple size="10" class="task-select">
                             </select>
                     </div>
+                    <div class="form-group">
+                        <label>Monster Locations (one per line):</label>
+                        <textarea id="monster-locations" rows="3" placeholder="Taverley Dungeon&#10;Catacombs of Kourend&#10;Wilderness"></textarea>
+                        <p class="help-text">Add "Wilderness" as a location if the monster is found there</p>
+                    </div>
                     <button onclick="addMonster()">Add Monster</button>
                 </div>
             </div>
@@ -163,6 +168,7 @@
     <script>
         // Global variables
         let currentMasterId = null;
+        let currentMasterName = null;
 
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
@@ -314,12 +320,18 @@
             // Create task list
             const taskList = monster.tasks.map(task => task.name).join(', ');
             
+            // Create location list
+            const locationList = monster.locations.map(loc => 
+                loc.is_wilderness ? `<span class="wilderness-location">${loc.name}</span>` : loc.name
+            ).join(', ');
+            
             card.innerHTML = `
                 <h3>${monster.name}</h3>
                 <div class="monster-stats">
                     <p>Kills: <strong>${monster.current_kills}/${limitText}</strong></p>
                     <p>Remaining: <strong class="${isLocked ? 'danger' : ''}">${remainingText}</strong></p>
                     ${taskList ? `<p class="task-list">Tasks: ${taskList}</p>` : '<p class="task-list">No tasks assigned</p>'}
+                    ${locationList ? `<p class="location-list">Locations: ${locationList}</p>` : ''}
                 </div>
                 <div class="monster-actions">
                     <button onclick="editDropRate(${monster.id}, '${monster.name}', ${monster.kill_limit})" class="edit-button">Edit Drop Rate</button>
@@ -341,6 +353,8 @@
             const dropType = document.querySelector('input[name="drop-type"]:checked').value;
             const taskSelect = document.getElementById('task-select');
             const selectedTasks = Array.from(taskSelect.selectedOptions).map(option => parseInt(option.value));
+            const locationsText = document.getElementById('monster-locations').value.trim();
+            const locations = locationsText ? locationsText.split('\n').map(loc => loc.trim()).filter(loc => loc) : [];
             
             if (!name) {
                 showMessage('Please enter a monster name', 'error');
@@ -378,7 +392,8 @@
                     body: JSON.stringify({
                         name: name, 
                         kill_limit: killLimit,
-                        task_ids: selectedTasks
+                        task_ids: selectedTasks,
+                        locations: locations
                     })
                 });
                 
@@ -388,6 +403,7 @@
                     showMessage(result.message, 'success');
                     document.getElementById('monster-name').value = '';
                     document.getElementById('drop-rate').value = '';
+                    document.getElementById('monster-locations').value = '';
                     taskSelect.selectedIndex = -1;
                     loadMonsters();
                     loadMasters(); // Reload masters to update efficiency
@@ -477,8 +493,13 @@
                 card.classList.add('optimal');
             }
 
+            // Add special styling for location-based masters
+            if (master.location_based) {
+                card.classList.add('location-based');
+            }
+
             card.innerHTML = `
-                <h3>${master.name}</h3>
+                <h3>${master.name}${master.location_based ? ' <span class="location-badge">Location-based</span>' : ''}</h3>
                 <div class="master-stats">
                     <p>Requirements: ${master.combat_requirement} Combat, ${master.slayer_requirement} Slayer</p>
                     <p>Points per task: ${master.points_per_task} (${master.points_per_10th} on 10th)</p>
@@ -502,6 +523,7 @@
         // View master tasks
         async function viewMasterTasks(masterId, masterName) {
             currentMasterId = masterId;
+            currentMasterName = masterName;
             
             try {
                 const response = await fetch(`/api/slayer-masters/${masterId}/tasks`);
@@ -539,9 +561,21 @@
 
             const monsterList = task.monsters.map(m => {
                 const limitText = m.kill_limit === -1 ? '∞' : m.kill_limit;
-                const statusIcon = m.can_kill ? '✓' : '✗';
-                const statusClass = m.can_kill ? 'can-kill' : 'cannot-kill';
-                return `<span class="${statusClass}">${statusIcon} ${m.name} (${m.current_kills}/${limitText})</span>`;
+                let statusIcon = '✓';
+                let statusClass = 'can-kill';
+                let statusReason = '';
+                
+                if (!m.can_kill) {
+                    statusIcon = '✗';
+                    statusClass = 'cannot-kill';
+                    if (!m.can_kill_by_count) {
+                        statusReason = ' (kill limit)';
+                    } else if (!m.can_kill_by_location) {
+                        statusReason = ' (wrong location)';
+                    }
+                }
+                
+                return `<span class="${statusClass}">${statusIcon} ${m.name} (${m.current_kills}/${limitText})${statusReason}</span>`;
             }).join(', ');
 
             let unlocksHTML = '';
@@ -550,6 +584,12 @@
             }
             if (task.slayer_unlock) {
                 unlocksHTML += `<p class="unlock-req">Slayer Unlock: ${task.slayer_unlock}</p>`;
+            }
+            if (task.location_restriction) {
+                // For Krystilia, it's always Wilderness
+                const isKrystilia = currentMasterName === 'Krystilia';
+                const locationText = isKrystilia ? 'Wilderness only' : task.location_restriction;
+                unlocksHTML += `<p class="location-restriction">Location: <strong>${locationText}</strong></p>`;
             }
             if (!task.is_assignable) {
                 unlocksHTML += '<p class="warning">⚠️ Cannot be assigned!</p>';
@@ -570,7 +610,7 @@
                     <p>Weight: ${task.weight} | Amount: ${task.min_amount}-${task.max_amount} | Req: ${task.slayer_requirement} Slayer</p>
                     <p>Monsters: ${monsterList}</p>
                     ${unlocksHTML}
-                    ${!task.can_do ? '<p class="warning">⚠️ Cannot complete - all monsters locked!</p>' : ''}
+                    ${!task.can_do ? '<p class="warning">⚠️ Cannot complete - no killable monsters!</p>' : ''}
                 </div>
             `;
             
@@ -587,7 +627,7 @@
                 });
                 
                 if (response.ok) {
-                    viewMasterTasks(masterId, document.getElementById('modal-title').textContent.replace(' Tasks', ''));
+                    viewMasterTasks(masterId, currentMasterName);
                     loadMasters();
                 }
             } catch (error) {
@@ -604,7 +644,7 @@
                 });
                 
                 if (response.ok) {
-                    viewMasterTasks(masterId, document.getElementById('modal-title').textContent.replace(' Tasks', ''));
+                    viewMasterTasks(masterId, currentMasterName);
                     loadMasters();
                 }
             } catch (error) {

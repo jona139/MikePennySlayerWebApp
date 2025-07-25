@@ -242,6 +242,35 @@ button:hover {
     margin-top: 10px;
 }
 
+/* Location styles */
+.location-list {
+    font-size: 0.85em;
+    color: #999;
+    margin-top: 5px;
+    font-style: italic;
+}
+
+.wilderness-location {
+    color: #ff6b35;
+    font-weight: bold;
+}
+
+.location-restriction {
+    color: #ff6b35;
+    font-weight: bold;
+    margin-top: 5px;
+}
+
+.location-badge {
+    background-color: #ff6b35;
+    color: white;
+    font-size: 0.7em;
+    padding: 2px 8px;
+    border-radius: 3px;
+    vertical-align: middle;
+    margin-left: 5px;
+}
+
 /* Master grid */
 .master-grid {
     display: grid;
@@ -265,6 +294,10 @@ button:hover {
 .master-card.optimal {
     border-color: #4ecdc4;
     box-shadow: 0 0 20px rgba(78, 205, 196, 0.3);
+}
+
+.master-card.location-based {
+    border-color: #ff6b35;
 }
 
 .master-card h3 {

@@ -43,7 +43,38 @@ class SlayerDatabase:
                 combat_requirement INTEGER DEFAULT 0,
                 slayer_requirement INTEGER DEFAULT 0,
                 points_per_task INTEGER DEFAULT 0,
-                points_per_10th INTEGER DEFAULT 0
+                points_per_10th INTEGER DEFAULT 0,
+                location_based INTEGER DEFAULT 0
+            )
+        ''')
+        
+        # Add location_based column if it doesn't exist
+        cursor.execute('''
+            PRAGMA table_info(slayer_masters)
+        ''')
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'location_based' not in columns:
+            cursor.execute('''
+                ALTER TABLE slayer_masters ADD COLUMN location_based INTEGER DEFAULT 0
+            ''')
+        
+        # Locations table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                is_wilderness INTEGER DEFAULT 0
+            )
+        ''')
+        
+        # Which monsters are found in which locations
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS monster_locations (
+                monster_id INTEGER,
+                location_id INTEGER,
+                FOREIGN KEY (monster_id) REFERENCES monsters (id),
+                FOREIGN KEY (location_id) REFERENCES locations (id),
+                PRIMARY KEY (monster_id, location_id)
             )
         ''')
         
@@ -67,11 +98,22 @@ class SlayerDatabase:
                 max_amount INTEGER DEFAULT 50,
                 quest_unlocks TEXT,
                 slayer_unlock TEXT,
+                location_restriction TEXT,
                 FOREIGN KEY (slayer_master_id) REFERENCES slayer_masters (id),
                 FOREIGN KEY (task_id) REFERENCES tasks (id),
                 UNIQUE(slayer_master_id, task_id)
             )
         ''')
+        
+        # Add location_restriction column if it doesn't exist
+        cursor.execute('''
+            PRAGMA table_info(master_tasks)
+        ''')
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'location_restriction' not in columns:
+            cursor.execute('''
+                ALTER TABLE master_tasks ADD COLUMN location_restriction TEXT
+            ''')
         
         # Which monsters belong to which tasks
         cursor.execute('''
@@ -103,22 +145,30 @@ class SlayerDatabase:
         
         # Initialize slayer masters if they don't exist
         masters = [
-            ('Turael', 0, 1, 0, 0),
-            ('Mazchna', 20, 1, 2, 5),
-            ('Vannaka', 40, 1, 4, 20),
-            ('Chaeldar', 70, 1, 10, 50),
-            ('Nieve', 85, 1, 12, 60),
-            ('Duradel', 100, 50, 15, 75),
-            ('Krystilia', 0, 1, 25, 125),
-            ('Spria', 0, 1, 0, 0)
+            ('Turael', 0, 1, 0, 0, 0),
+            ('Mazchna', 20, 1, 2, 5, 0),
+            ('Vannaka', 40, 1, 4, 20, 0),
+            ('Chaeldar', 70, 1, 10, 50, 0),
+            ('Nieve', 85, 1, 12, 60, 0),
+            ('Duradel', 100, 50, 15, 75, 0),
+            ('Krystilia', 0, 1, 25, 125, 0),
+            ('Spria', 0, 1, 0, 0, 0),
+            ('Konar', 75, 1, 18, 90, 1)  # Konar gives location-based tasks
         ]
         
         for master in masters:
             cursor.execute('''
                 INSERT OR IGNORE INTO slayer_masters 
-                (name, combat_requirement, slayer_requirement, points_per_task, points_per_10th)
-                VALUES (?, ?, ?, ?, ?)
+                (name, combat_requirement, slayer_requirement, points_per_task, points_per_10th, location_based)
+                VALUES (?, ?, ?, ?, ?, ?)
             ''', master)
+        
+        # Mark Krystilia tasks as Wilderness-only
+        cursor.execute('''
+            UPDATE master_tasks 
+            SET location_restriction = 'Wilderness'
+            WHERE slayer_master_id = (SELECT id FROM slayer_masters WHERE name = 'Krystilia')
+        ''')
         
         # Initialize player data with defaults
         player_defaults = {
@@ -133,12 +183,45 @@ class SlayerDatabase:
         for key, value in player_defaults.items():
             cursor.execute('INSERT OR IGNORE INTO player_data (key, value) VALUES (?, ?)', (key, value))
 
-        
         conn.commit()
         conn.close()
     
+    # Location Management
+    def add_location(self, name, is_wilderness=False):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('INSERT OR IGNORE INTO locations (name, is_wilderness) VALUES (?, ?)', 
+                          (name, 1 if is_wilderness else 0))
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+    
+    def add_monster_location(self, monster_id, location_id):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('INSERT OR IGNORE INTO monster_locations (monster_id, location_id) VALUES (?, ?)',
+                          (monster_id, location_id))
+            conn.commit()
+        finally:
+            conn.close()
+    
+    def get_location_id(self, location_name):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT id FROM locations WHERE name = ?', (location_name,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        return row['id'] if row else None
+    
     # Monster Management
-    def add_monster(self, name, kill_limit, task_ids):
+    def add_monster(self, name, kill_limit, task_ids, locations=None):
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -156,6 +239,20 @@ class SlayerDatabase:
             for task_id in task_ids:
                 cursor.execute('INSERT INTO task_monsters (task_id, monster_id) VALUES (?, ?)',
                               (task_id, monster_id))
+            
+            # Link monster to locations if provided
+            if locations:
+                for location_name in locations:
+                    location_id = self.get_location_id(location_name)
+                    if not location_id:
+                        # Create location if it doesn't exist
+                        is_wilderness = 'wilderness' in location_name.lower()
+                        cursor.execute('INSERT INTO locations (name, is_wilderness) VALUES (?, ?)',
+                                      (location_name, 1 if is_wilderness else 0))
+                        location_id = cursor.lastrowid
+                    
+                    cursor.execute('INSERT OR IGNORE INTO monster_locations (monster_id, location_id) VALUES (?, ?)',
+                                  (monster_id, location_id))
             
             conn.commit()
             return True, "Monster added successfully!"
@@ -205,13 +302,25 @@ class SlayerDatabase:
             
             tasks = [{'id': task['id'], 'name': task['name']} for task in cursor.fetchall()]
             
+            # Get locations for this monster
+            cursor.execute('''
+                SELECT l.name, l.is_wilderness
+                FROM monster_locations ml
+                JOIN locations l ON ml.location_id = l.id
+                WHERE ml.monster_id = ?
+                ORDER BY l.name
+            ''', (row['id'],))
+            
+            locations = [{'name': loc['name'], 'is_wilderness': loc['is_wilderness']} for loc in cursor.fetchall()]
+            
             monsters.append({
                 'id': row['id'],
                 'name': row['name'],
                 'kill_limit': row['kill_limit'],
                 'current_kills': row['current_kills'],
                 'remaining': -1 if row['kill_limit'] == -1 else row['kill_limit'] - row['current_kills'],
-                'tasks': tasks
+                'tasks': tasks,
+                'locations': locations
             })
         
         conn.close()
@@ -255,16 +364,16 @@ class SlayerDatabase:
         finally:
             conn.close()
     
-    def add_master_task_assignment(self, slayer_master_id, task_id, weight, min_amount, max_amount, quest_unlocks, slayer_unlock):
+    def add_master_task_assignment(self, slayer_master_id, task_id, weight, min_amount, max_amount, quest_unlocks, slayer_unlock, location_restriction=None):
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
             cursor.execute('''
                 INSERT OR IGNORE INTO master_tasks 
-                (slayer_master_id, task_id, weight, min_amount, max_amount, quest_unlocks, slayer_unlock)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (slayer_master_id, task_id, weight, min_amount, max_amount, json.dumps(quest_unlocks), slayer_unlock))
+                (slayer_master_id, task_id, weight, min_amount, max_amount, quest_unlocks, slayer_unlock, location_restriction)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (slayer_master_id, task_id, weight, min_amount, max_amount, json.dumps(quest_unlocks), slayer_unlock, location_restriction))
             
             conn.commit()
             return True
@@ -277,10 +386,15 @@ class SlayerDatabase:
         conn = self.get_connection()
         cursor = conn.cursor()
 
+        # Get master info
+        cursor.execute('SELECT location_based FROM slayer_masters WHERE id = ?', (master_id,))
+        master_info = cursor.fetchone()
+        is_location_based = master_info['location_based'] if master_info else False
+
         cursor.execute('''
             SELECT t.id, t.name, t.slayer_requirement,
                    mt.weight, mt.min_amount, mt.max_amount,
-                   mt.quest_unlocks, mt.slayer_unlock,
+                   mt.quest_unlocks, mt.slayer_unlock, mt.location_restriction,
                    sm.combat_requirement
             FROM master_tasks mt
             JOIN tasks t ON mt.task_id = t.id
@@ -327,7 +441,30 @@ class SlayerDatabase:
                 current_kills = monster_row['current_kills']
                 remaining_kills = -1 if kill_limit == -1 else kill_limit - current_kills
                 
-                can_kill = remaining_kills == -1 or remaining_kills >= avg_task_size
+                # Check if monster can be killed based on kills remaining
+                can_kill_by_count = remaining_kills == -1 or remaining_kills >= avg_task_size
+                
+                # Check location restrictions
+                can_kill_by_location = True
+                if row['location_restriction']:
+                    # Get monster locations
+                    cursor.execute('''
+                        SELECT l.name, l.is_wilderness
+                        FROM monster_locations ml
+                        JOIN locations l ON ml.location_id = l.id
+                        WHERE ml.monster_id = ?
+                    ''', (monster_row['id'],))
+                    
+                    monster_locations = cursor.fetchall()
+                    
+                    if row['location_restriction'] == 'Wilderness':
+                        # For Krystilia - monster must be in Wilderness
+                        can_kill_by_location = any(loc['is_wilderness'] for loc in monster_locations)
+                    elif is_location_based:
+                        # For Konar - monster must be in the specific location
+                        can_kill_by_location = any(loc['name'] == row['location_restriction'] for loc in monster_locations)
+                
+                can_kill = can_kill_by_count and can_kill_by_location
                 
                 if can_kill:
                     can_do_task = True
@@ -337,7 +474,9 @@ class SlayerDatabase:
                     'name': monster_row['name'],
                     'kill_limit': kill_limit,
                     'current_kills': current_kills,
-                    'can_kill': can_kill
+                    'can_kill': can_kill,
+                    'can_kill_by_count': can_kill_by_count,
+                    'can_kill_by_location': can_kill_by_location
                 })
 
             # Check if task is blocked
@@ -353,6 +492,7 @@ class SlayerDatabase:
                 'slayer_requirement': row['slayer_requirement'],
                 'quest_unlocks': json.loads(row['quest_unlocks']) if row['quest_unlocks'] else [],
                 'slayer_unlock': row['slayer_unlock'],
+                'location_restriction': row['location_restriction'],
                 'monsters': monsters,
                 'can_do': can_do_task,
                 'is_blocked': is_blocked,
@@ -420,7 +560,8 @@ class SlayerDatabase:
                 'combat_requirement': row['combat_requirement'],
                 'slayer_requirement': row['slayer_requirement'],
                 'points_per_task': row['points_per_task'],
-                'points_per_10th': row['points_per_10th']
+                'points_per_10th': row['points_per_10th'],
+                'location_based': row['location_based']
             })
         
         conn.close()
