@@ -1,6 +1,7 @@
 import sqlite3
 import json
 from datetime import datetime
+import math
 
 class SlayerDatabase:
     def __init__(self, db_name='slayer_tracker.db'):
@@ -49,14 +50,10 @@ class SlayerDatabase:
         ''')
         
         # Add location_based column if it doesn't exist
-        cursor.execute('''
-            PRAGMA table_info(slayer_masters)
-        ''')
+        cursor.execute("PRAGMA table_info(slayer_masters)")
         columns = [row[1] for row in cursor.fetchall()]
         if 'location_based' not in columns:
-            cursor.execute('''
-                ALTER TABLE slayer_masters ADD COLUMN location_based INTEGER DEFAULT 0
-            ''')
+            cursor.execute("ALTER TABLE slayer_masters ADD COLUMN location_based INTEGER DEFAULT 0")
         
         # Locations table
         cursor.execute('''
@@ -86,7 +83,14 @@ class SlayerDatabase:
                 slayer_requirement INTEGER DEFAULT 1
             )
         ''')
-        
+
+        # Check and correct master_tasks schema
+        cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='master_tasks'")
+        table_sql_row = cursor.fetchone()
+        if table_sql_row and "UNIQUE(slayer_master_id, task_id, location_restriction)" not in table_sql_row['sql']:
+            cursor.execute("DROP TABLE master_tasks")
+            conn.commit()
+
         # Which masters can assign which tasks
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS master_tasks (
@@ -101,19 +105,15 @@ class SlayerDatabase:
                 location_restriction TEXT,
                 FOREIGN KEY (slayer_master_id) REFERENCES slayer_masters (id),
                 FOREIGN KEY (task_id) REFERENCES tasks (id),
-                UNIQUE(slayer_master_id, task_id)
+                UNIQUE(slayer_master_id, task_id, location_restriction)
             )
         ''')
         
-        # Add location_restriction column if it doesn't exist
-        cursor.execute('''
-            PRAGMA table_info(master_tasks)
-        ''')
+        # Add location_restriction column if it doesn't exist (for fresh dbs)
+        cursor.execute("PRAGMA table_info(master_tasks)")
         columns = [row[1] for row in cursor.fetchall()]
         if 'location_restriction' not in columns:
-            cursor.execute('''
-                ALTER TABLE master_tasks ADD COLUMN location_restriction TEXT
-            ''')
+            cursor.execute("ALTER TABLE master_tasks ADD COLUMN location_restriction TEXT")
         
         # Which monsters belong to which tasks
         cursor.execute('''
@@ -153,7 +153,7 @@ class SlayerDatabase:
             ('Duradel', 100, 50, 15, 75, 0),
             ('Krystilia', 0, 1, 25, 125, 0),
             ('Spria', 0, 1, 0, 0, 0),
-            ('Konar', 75, 1, 18, 90, 1)  # Konar gives location-based tasks
+            ('Konar', 75, 1, 18, 90, 1)
         ]
         
         for master in masters:
@@ -162,13 +162,6 @@ class SlayerDatabase:
                 (name, combat_requirement, slayer_requirement, points_per_task, points_per_10th, location_based)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', master)
-        
-        # Mark Krystilia tasks as Wilderness-only
-        cursor.execute('''
-            UPDATE master_tasks 
-            SET location_restriction = 'Wilderness'
-            WHERE slayer_master_id = (SELECT id FROM slayer_masters WHERE name = 'Krystilia')
-        ''')
         
         # Initialize player data with defaults
         player_defaults = {
@@ -387,7 +380,7 @@ class SlayerDatabase:
         cursor = conn.cursor()
 
         # Get master info
-        cursor.execute('SELECT location_based FROM slayer_masters WHERE id = ?', (master_id,))
+        cursor.execute('SELECT name, location_based FROM slayer_masters WHERE id = ?', (master_id,))
         master_info = cursor.fetchone()
         is_location_based = master_info['location_based'] if master_info else False
 
@@ -400,7 +393,7 @@ class SlayerDatabase:
             JOIN tasks t ON mt.task_id = t.id
             JOIN slayer_masters sm ON mt.slayer_master_id = sm.id
             WHERE mt.slayer_master_id = ?
-            ORDER BY t.name
+            ORDER BY t.name, mt.location_restriction
         ''', (master_id,))
 
         tasks = []
@@ -498,7 +491,40 @@ class SlayerDatabase:
                 'is_blocked': is_blocked,
                 'is_assignable': is_assignable
             })
+            
+        # For Konar, distribute the task weight among unlocked locations
+        if is_location_based:
+            grouped_tasks = {}
+            for task in tasks:
+                if task['name'] not in grouped_tasks:
+                    grouped_tasks[task['name']] = []
+                grouped_tasks[task['name']].append(task)
 
+            processed_tasks = []
+            for task_name, task_group in grouped_tasks.items():
+                base_weight = task_group[0]['weight'] if task_group else 0
+                
+                # A location is viable for weight distribution if the task can be assigned
+                assignable_locations = [t for t in task_group if t['is_assignable']]
+                num_assignable = len(assignable_locations)
+
+                if num_assignable > 0:
+                    distributed_weight = base_weight / num_assignable
+                    for task in task_group:
+                        if task in assignable_locations:
+                            task['weight'] = distributed_weight
+                        else:
+                            # Cannot be assigned, so it has 0 chance of being picked
+                            task['weight'] = 0 
+                else:
+                    # No locations for this task can be assigned
+                    for task in task_group:
+                        task['weight'] = 0
+
+                processed_tasks.extend(task_group)
+            
+            tasks = processed_tasks
+            
         conn.close()
         return tasks
     
